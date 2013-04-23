@@ -2,5 +2,7 @@ tags
 test/*
 pkg/*
 .rvmrc
+.ruby-version
+.ruby-gemset
 spec/gemfiles/*.lock
 spec/integration/mysql
