@@ -41,8 +41,8 @@ shared_context 'connection setup' do
   end
 
   before do
-    ActiveRecord::Base.master_mock = master_connection
-    ActiveRecord::Base.slave_mock = slave_connection
+    ActiveRecord::Base.stub(:master_mock) { master_connection }
+    ActiveRecord::Base.stub(:slave_mock) { slave_connection }
     ActiveRecord::Base.establish_connection(database_setup)
   end
 

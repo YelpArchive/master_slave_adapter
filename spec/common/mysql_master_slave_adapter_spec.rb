@@ -1,23 +1,22 @@
 $: << File.expand_path(File.join(File.dirname( __FILE__ ), '..', '..', 'lib'))
 
 require 'rspec'
+require 'rspec/mocks'
 require 'common/support/connection_setup_helper'
 require 'common/support/mysql_consistency_examples'
 require 'active_record/connection_adapters/mysql_master_slave_adapter'
 
-module ActiveRecord
-  class Base
-    cattr_accessor :master_mock, :slave_mock
-
-    def self.mysql_connection(config)
-      config[:database] == 'slave' ? slave_mock : master_mock
-    end
-  end
-end
-
 describe ActiveRecord::ConnectionAdapters::MysqlMasterSlaveAdapter do
   include_context 'connection setup'
   let(:connection_adapter) { 'mysql' }
+
+  before do
+    ActiveRecord::Base.stub(:mysql_connection) do |config|
+      config[:database] == 'slave' ?
+        ActiveRecord::Base.slave_mock :
+        ActiveRecord::Base.master_mock
+    end
+  end
 
   it_should_behave_like 'mysql consistency'
 
