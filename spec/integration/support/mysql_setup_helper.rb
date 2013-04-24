@@ -118,24 +118,21 @@ private
   end
 
   def start(name)
-    $pipes ||= {}
-    $pipes[name] = IO.popen("mysqld --defaults-file='#{location(name)}/my.cnf'")
+    return if started?(name)
+
+    $forks ||= {}
+    $forks[name] = fork do
+      exec("mysqld --defaults-file='#{location(name)}/my.cnf'")
+    end
+
     wait_for_database_boot(name)
   end
 
   def stop(name)
-    pipe = $pipes[name]
-    Process.kill("KILL", pipe.pid)
-    Process.wait(pipe.pid, Process::WNOHANG)
-
-    # Ruby 1.8.7 doesn't support IO.popen([cmd, [arg, ]]) syntax, and passing
-    # the command line as string wraps the process in a shell. The IO#pid method
-    # will then only return the pid of the wrapping shell process, which is not
-    # what we need here.
-    mysqld_pid = `ps a | grep 'mysqld.*#{location(name)}/my.cnf' | grep -v grep | awk '{print $1}'`.to_i
-    Process.kill("KILL", mysqld_pid) unless mysqld_pid.zero?
-  ensure
-    pipe.close unless pipe.closed?
+    if fork = $forks.delete(name)
+      Process.kill("KILL", fork)
+      Process.wait(fork)
+    end
   end
 
   def started?(host)
@@ -143,7 +140,7 @@ private
   end
 
   def wait_for_database_boot(host)
-    Timeout.timeout(5) do
+    Timeout.timeout(10) do
       until started?(host); sleep(0.1); end
     end
   rescue Timeout::Error
