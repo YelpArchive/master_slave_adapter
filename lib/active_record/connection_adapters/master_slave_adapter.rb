@@ -46,12 +46,15 @@ module ActiveRecord
       def massage(config)
         config = config.symbolize_keys
         skip = [ :adapter, :connection_adapter, :master, :slaves ]
+
         defaults = config.
           reject { |k,_| skip.include?(k) }.
           merge(:adapter => config.fetch(:connection_adapter))
-        ([config.fetch(:master)] + config.fetch(:slaves, [])).map do |cfg|
+
+        [config.fetch(:master), *config.fetch(:slaves, [])].each do |cfg|
           cfg.symbolize_keys!.reverse_merge!(defaults)
         end
+
         config
       end
 
