@@ -487,7 +487,7 @@ module ActiveRecord
               end
 
               # keep using master after write
-              connection_stack.replace([conn] * (connection_stack.size + 1))
+              connection_stack.replace([conn] * connection_stack.size)
             end
           end
         end

@@ -326,7 +326,7 @@ describe ActiveRecord::ConnectionAdapters::MasterSlaveAdapter do
         end
         adapter_connection.current_connection.should == master_connection
       end
-      adapter_connection.current_connection.should == master_connection
+      adapter_connection.current_connection.should == slave_connection
     end
   end
 end
