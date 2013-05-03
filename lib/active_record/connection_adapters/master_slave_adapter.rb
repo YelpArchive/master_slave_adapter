@@ -1,3 +1,4 @@
+require 'thread'
 require 'active_record'
 require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/master_slave_adapter/circuit_breaker'
@@ -103,6 +104,8 @@ module ActiveRecord
       def initialize(config, logger)
         super(nil, logger)
 
+        initialize_inactive_queue
+
         @config = config
         @connections = {}
         @connections[:master] = connect_to_master
@@ -110,8 +113,45 @@ module ActiveRecord
         @last_seen_slave_clocks = {}
         @disable_connection_test = @config[:disable_connection_test] == 'true'
         @circuit = CircuitBreaker.new(logger)
+      end
 
-        self.current_connection = slave_connection!
+      def initialize_inactive_queue
+        @inactive_connections = Queue.new
+
+        @inactive_consumer = Thread.new do
+          loop do
+            @inactive_connection = @inactive_connections.pop
+
+            attempt = begin
+              @inactive_connection.reconnect!
+              @inactive_connection.active?
+            rescue Exception => e
+              Rails.logger.error e
+              false
+            end
+
+            if attempt
+              @connections[:slaves] << @inactive_connection
+            else
+              @inactive_connections << @inactive_connection
+            end
+
+            sleep 5
+          end
+        end
+      end
+
+      def destroy_inactive_queue
+        @inactive_consumer.exit if @inactive_consumer
+
+        if !@connections[:slaves].include?(@inactive_connection) &&
+           @inactive_connection
+          @connections[:slaves] << @inactive_connection
+        end
+
+        until @inactive_connections.empty?
+          @connections[:slave] << @inactive_connections.pop
+        end
       end
 
       # MASTER SLAVE ADAPTER INTERFACE ========================================
@@ -120,8 +160,9 @@ module ActiveRecord
         with(master_connection) { yield }
       end
 
+      # push nil into connection stack to pick slave connection randomly
       def with_slave
-        with(slave_connection!) { yield }
+        with(nil) { yield }
       end
 
       def with_consistency(clock)
@@ -186,10 +227,14 @@ module ActiveRecord
       end
 
       def reconnect!
+        destroy_inactive_queue
         connections.each { |c| c.reconnect! }
+      ensure
+        initialize_inactive_queue
       end
 
       def disconnect!
+        destroy_inactive_queue
         connections.each { |c| c.disconnect! }
       end
 
@@ -372,7 +417,7 @@ module ActiveRecord
       end
 
       def current_connection
-        connection_stack.first
+        connection_stack.first || slave_connection!
       end
 
       def current_clock
@@ -442,7 +487,7 @@ module ActiveRecord
               end
 
               # keep using master after write
-              connection_stack.replace([ conn ])
+              connection_stack.replace([conn] * (connection_stack.size + 1))
             end
           end
         end
@@ -450,9 +495,11 @@ module ActiveRecord
 
       def with(connection)
         self.current_connection = connection
-        yield(connection).tap { connection_stack.shift if connection_stack.size > 1 }
+        yield(current_connection)
       rescue ActiveRecord::StatementInvalid => exception
         handle_error(connection, exception)
+      ensure
+        connection_stack.shift
       end
 
       def connect(cfg, name)
