@@ -59,6 +59,8 @@ describe ActiveRecord::ConnectionAdapters::Mysql2MasterSlaveAdapter do
     it "raises StatementInvalid for other errors" do
       master_connection.should_receive(:insert).and_raise(ActiveRecord::StatementInvalid.new("Mysql2::Error: Query execution was interrupted: INSERT 42"))
 
+      master_connection.stub(:slave_connection?).and_return(false)
+
       expect do
         adapter_connection.insert("INSERT 42")
       end.to raise_error(ActiveRecord::StatementInvalid)

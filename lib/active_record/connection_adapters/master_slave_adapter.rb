@@ -5,6 +5,7 @@ require 'active_record/connection_adapters/master_slave_adapter/circuit_breaker'
 
 module ActiveRecord
   class MasterUnavailable < ConnectionNotEstablished; end
+  class SlaveUnavailable < ConnectionNotEstablished; end
 
   class Base
     class << self
@@ -450,6 +451,10 @@ module ActiveRecord
         @connections[:master] == connection
       end
 
+      def slave_connection?(connection)
+        @connections[:slaves].include? connection
+      end
+
       def reset_master_connection
         @connections[:master] = nil
       end
@@ -534,6 +539,11 @@ module ActiveRecord
         if master_connection?(connection) && connection_error?(exception)
           reset_master_connection
           raise MasterUnavailable
+        elsif slave_connection?(connection) && connection_error?(exception)
+          connection_stack.map!{|conn| conn == connection ? nil : conn }
+          @connections[:slaves].delete(connection)
+          @inactive_connections << connection
+          raise SlaveUnavailable
         else
           raise exception
         end

@@ -53,6 +53,8 @@ describe ActiveRecord::ConnectionAdapters::MysqlMasterSlaveAdapter do
       master_connection.stub_chain(:raw_connection, :errno).and_return(Mysql::Error::ER_QUERY_INTERRUPTED)
       master_connection.should_receive(:insert).and_raise(error)
 
+      master_connection.stub(:slave_connection?).and_return(false)
+
       expect do
         adapter_connection.insert("INSERT 42")
       end.to raise_error(ActiveRecord::StatementInvalid)

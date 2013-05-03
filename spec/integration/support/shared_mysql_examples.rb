@@ -219,7 +219,7 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
       it "fails" do
         expect do
           ActiveRecord::Base.with_slave { should_read_from :slave }
-        end.to raise_error(ActiveRecord::StatementInvalid)
+        end.to raise_error(ActiveRecord::SlaveUnavailable)
       end
     end
 
