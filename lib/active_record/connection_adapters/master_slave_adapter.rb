@@ -1,7 +1,7 @@
-require 'thread'
 require 'active_record'
 require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/master_slave_adapter/circuit_breaker'
+require 'active_record/connection_adapters/master_slave_adapter/inactive_queue'
 
 module ActiveRecord
   class MasterUnavailable < ConnectionNotEstablished; end
@@ -105,54 +105,17 @@ module ActiveRecord
       def initialize(config, logger)
         super(nil, logger)
 
-        initialize_inactive_queue
-
         @config = config
         @connections = {}
         @connections[:master] = connect_to_master
         @connections[:slaves] = @config.fetch(:slaves).map { |cfg| connect(cfg, :slave) }
+
+        @inactive_queue = InactiveQueue.new(@connections[:slaves], logger)
+        @inactive_queue.start
+
         @last_seen_slave_clocks = {}
         @disable_connection_test = @config[:disable_connection_test] == 'true'
         @circuit = CircuitBreaker.new(logger)
-      end
-
-      def initialize_inactive_queue
-        @inactive_connections = Queue.new
-
-        @inactive_consumer = Thread.new do
-          loop do
-            @inactive_connection = @inactive_connections.pop
-
-            attempt = begin
-              @inactive_connection.reconnect!
-              @inactive_connection.active?
-            rescue Exception => e
-              Rails.logger.error e
-              false
-            end
-
-            if attempt
-              @connections[:slaves] << @inactive_connection
-            else
-              @inactive_connections << @inactive_connection
-            end
-
-            sleep 5
-          end
-        end
-      end
-
-      def destroy_inactive_queue
-        @inactive_consumer.exit if @inactive_consumer
-
-        if !@connections[:slaves].include?(@inactive_connection) &&
-           @inactive_connection
-          @connections[:slaves] << @inactive_connection
-        end
-
-        until @inactive_connections.empty?
-          @connections[:slave] << @inactive_connections.pop
-        end
       end
 
       # MASTER SLAVE ADAPTER INTERFACE ========================================
@@ -228,14 +191,14 @@ module ActiveRecord
       end
 
       def reconnect!
-        destroy_inactive_queue
+        @inactive_queue.stop
         connections.each { |c| c.reconnect! }
       ensure
-        initialize_inactive_queue
+        @inactive_queue.start
       end
 
       def disconnect!
-        destroy_inactive_queue
+        @inactive_queue.stop
         connections.each { |c| c.disconnect! }
       end
 
@@ -541,7 +504,7 @@ module ActiveRecord
         elsif slave_connection?(connection) && connection_error?(exception, connection)
           connection_stack.map!{|conn| conn == connection ? nil : conn }
           @connections[:slaves].delete(connection)
-          @inactive_connections << connection
+          @inactive_queue << connection
           raise SlaveUnavailable
         else
           raise exception
