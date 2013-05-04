@@ -11,12 +11,13 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
       :database => 'master_slave_adapter',
       :master => {
         :host => '127.0.0.1',
-        :port => port(:master),
+        :port => port(:master, 1),
       },
-      :slaves => [{
-        :host => '127.0.0.1',
-        :port => port(:slave),
-      }],
+      :slaves => [
+        { :host => '127.0.0.1',
+          :port => port(:slave, 1) },
+        { :host => '127.0.0.1',
+          :port => port(:slave, 2) } ],
     }
   end
 
@@ -28,28 +29,43 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
     ActiveRecord::Base.connection
   end
 
-  def should_read_from(host)
-    server = server_id(host)
+  def should_read_from(role, index=nil)
+    server = server_id(index.nil? ? :master : host, index || 1)
     query  = "SELECT @@Server_id as Value"
 
-    connection.select_all(query).first["Value"].to_s.should == server
-    connection.select_one(query)["Value"].to_s.should == server
-    connection.select_rows(query).first.first.to_s.should == server
-    connection.select_value(query).to_s.should == server
-    connection.select_values(query).first.to_s.should == server
+    [ connection.select_all(query).first["Value"],
+      connection.select_one(query)["Value"],
+      connection.select_rows(query).first.first,
+      connection.select_value(query),
+      connection.select_values(query).first ].each do |id|
+      if role == :master || !index.nil?
+        # ensure equal id when master or slave with index
+        id.to_s.should == server
+      else role == :slave
+        id.to_s.to_i.should > server.to_i
+      end
+    end
   end
 
   before(:all) do
     setup
+
     start_master
-    start_slave
-    configure
-    start_replication
+    start_slave 1
+    start_slave 2
+
+    configure_master
+    configure_slave 1
+    configure_slave 2
+
+    start_replication 1
+    start_replication 2
   end
 
   after(:all) do
     stop_master
-    stop_slave
+    stop_slave 1
+    stop_slave 2
   end
 
   before do
@@ -78,7 +94,7 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
     it "logs the connection info" do
       ActiveRecord::Base.connection.select_value("SELECT 42")
 
-      logger.last.should =~ /\[slave:127.0.0.1:3311\] SQL .*SELECT 42/
+      logger.last.should =~ /\[slave:127.0.0.1:\d+\] SQL .*SELECT 42/
     end
   end
 
@@ -101,7 +117,8 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
   context "when asked for consistency" do
     context "given slave is fully synced" do
       before do
-        wait_for_replication_sync
+        wait_for_replication_sync 1
+        wait_for_replication_sync 2
       end
 
       it "reads from slave" do
@@ -113,12 +130,14 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
 
     context "given slave lags behind" do
       before do
-        stop_replication
+        stop_replication 1
+        stop_replication 2
         move_master_clock
       end
 
       after do
-        start_replication
+        start_replication 1
+        start_replication 2
       end
 
       it "reads from master" do
@@ -129,8 +148,10 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
 
       context "and slave catches up" do
         before do
-          start_replication
-          wait_for_replication_sync
+          start_replication 1
+          start_replication 2
+          wait_for_replication_sync 1
+          wait_for_replication_sync 2
         end
 
         it "reads from slave" do
@@ -143,16 +164,22 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
 
     context "given we always wait for slave to catch up and be consistent" do
       before do
-        start_replication
+        start_replication 1
+        start_replication 2
       end
 
       it "should always read from slave" do
-        wait_for_replication_sync
+        wait_for_replication_sync 1
+        wait_for_replication_sync 2
+
         ActiveRecord::Base.with_consistency(connection.master_clock) do
           should_read_from :slave
         end
         move_master_clock
-        wait_for_replication_sync
+
+        wait_for_replication_sync 1
+        wait_for_replication_sync 2
+
         ActiveRecord::Base.with_consistency(connection.master_clock) do
           should_read_from :slave
         end
@@ -208,11 +235,13 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
 
   context "given slave is not available" do
     before do
-      stop_slave
+      stop_slave 1
+      stop_slave 2
     end
 
     after do
-      start_slave
+      start_slave 1
+      start_slave 2
     end
 
     context "when asked for slave" do
@@ -222,7 +251,5 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
         end.to raise_error(ActiveRecord::SlaveUnavailable)
       end
     end
-
   end
-
 end

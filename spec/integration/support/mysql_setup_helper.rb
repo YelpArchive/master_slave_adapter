@@ -5,41 +5,41 @@ module MysqlSetupHelper
   TEST_TABLE  = "master_slave_adapter.master_slave_test"
 
   def master_id(*args); "1"; end
-  def slave_id(index=1); (master_id.to_i + index).to_s; end
+  def slave_id(index); (master_id.to_i + index).to_s; end
 
   def master_port(*args); 3310; end
-  def slave_port(index=1); master_port + index; end
+  def slave_port(index); master_port + index; end
 
-  def port(identifier, index=1)
-    send("#{identifier}_port", index)
+  def port(name, index)
+    send("#{name}_port", index)
   end
 
-  def server_id(identifier, index=1)
-    send("#{identifier}_id", index)
+  def server_id(name, index)
+    send("#{name}_id", index)
   end
 
-  def start_replication(index=1)
+  def start_replication(index)
     execute("start slave", :slave, index)
   end
 
-  def stop_replication(index=1)
+  def stop_replication(index)
     execute("stop slave", :slave, index)
   end
 
   def move_master_clock
-    execute("insert into #{TEST_TABLE} (message) VALUES ('test')", :master)
+    execute("insert into #{TEST_TABLE} (message) VALUES ('test')", :master, 1)
   end
 
-  def wait_for_replication_sync
+  def wait_for_replication_sync(index)
     Timeout.timeout(5) do
-      until slave_status == master_status; end
+      until slave_status(index) == master_status; end
     end
   rescue Timeout::Error
     raise "Replication synchronization failed"
   end
 
-  def configure
-    execute(<<-EOS, :master)
+  def configure_master(*args)
+    execute(<<-EOS, :master, 1)
       SET sql_log_bin = 0;
       create user 'slave'@'localhost' identified by 'slave';
       grant replication slave on *.* to 'slave'@'localhost';
@@ -47,15 +47,7 @@ module MysqlSetupHelper
       SET sql_log_bin = 1;
     EOS
 
-    execute(<<-EOS, :slave, 1)
-      change master to master_user = 'slave',
-             master_password = 'slave',
-             master_port = #{port(:master)},
-             master_host = 'localhost';
-      create database master_slave_adapter;
-    EOS
-
-    execute(<<-EOS, :master)
+    execute(<<-EOS, :master, 1)
       CREATE TABLE #{TEST_TABLE} (
         id int(11) NOT NULL AUTO_INCREMENT,
         message text COLLATE utf8_unicode_ci,
@@ -65,7 +57,17 @@ module MysqlSetupHelper
     EOS
   end
 
-  def setup_for(name, index=1)
+  def configure_slave(index)
+    execute(<<-EOS, :slave, index)
+      change master to master_user = 'slave',
+             master_password = 'slave',
+             master_port = #{port(:master, 1)},
+             master_host = 'localhost';
+      create database master_slave_adapter;
+    EOS
+  end
+
+  def setup_for(name, index)
     path        = location(name, index)
     config_path = File.join(path, "my.cnf")
     base_dir    = File.dirname(File.dirname(`which mysql_install_db`))
@@ -78,45 +80,46 @@ module MysqlSetupHelper
   end
 
   def setup
-    setup_for(:master)
-    setup_for(:slave)
+    setup_for(:master, 1)
+    setup_for(:slave, 1)
+    setup_for(:slave, 2)
   end
 
   def start_master
-    start(:master)
+    start(:master, 1)
   end
 
   def stop_master
-    stop(:master)
+    stop(:master, 1)
   end
 
-  def start_slave(index=1)
+  def start_slave(index)
     start(:slave, index)
   end
 
-  def stop_slave(index=1)
+  def stop_slave(index)
     stop(:slave, index)
   end
 
 private
 
-  def slave_status(index=1)
+  def slave_status(index)
     status(:slave, index).values_at(9, 21)
   end
 
   def master_status
-    status(:master).values_at(0, 1)
+    status(:master, 1).values_at(0, 1)
   end
 
-  def status(name, index=1)
+  def status(name, index)
     `mysql --protocol=TCP -P#{port(name, index)} -uroot -N -s -e 'show #{name} status'`.strip.split("\t")
   end
 
-  def execute(statement, name, index=1)
+  def execute(statement, name, index)
     system(%{mysql --protocol=TCP -P#{port(name, index)} -uroot -e "#{statement}"})
   end
 
-  def start(name, index=1)
+  def start(name, index)
     return if started?(name, index)
 
     $forks ||= {}
@@ -127,39 +130,39 @@ private
     wait_for_database_boot(name, index)
   end
 
-  def stop(name, index=1)
+  def stop(name, index)
     if fork = $forks.delete([name, index])
       Process.kill("KILL", fork)
       Process.wait(fork)
     end
   end
 
-  def started?(host, index=1)
-    system(%{mysql --protocol=TCP -P#{port(host)} -uroot -e '' 2> /dev/null})
+  def started?(name, index)
+    system(%{mysql --protocol=TCP -P#{port(name, index)} -uroot -e '' 2> /dev/null})
   end
 
-  def wait_for_database_boot(host, index=1)
+  def wait_for_database_boot(name, index)
     Timeout.timeout(10) do
-      until started?(host, index); sleep(0.1); end
+      until started?(name, index); sleep(0.1); end
     end
   rescue Timeout::Error
     raise "Couldn't connect to MySQL in time"
   end
 
-  def location(name, index=1)
+  def location(name, index)
     File.expand_path(
-      File.join("..", "mysql", name.to_s, index.to_s),
+      File.join("..", "mysql", "#{name}_#{index}"),
       File.dirname(__FILE__))
   end
 
-  def config(name, index=1)
+  def config(name, index)
     path = location(name, index)
 
     <<-EOS
 [mysqld]
 pid-file                = #{path}/mysqld.pid
 socket                  = #{path}/mysqld.sock
-port                    = #{port(name)}
+port                    = #{port(name, index)}
 log-error               = #{path}/error.log
 datadir                 = #{path}/data
 log-bin                 = #{name}-bin

@@ -275,11 +275,10 @@ module ActiveRecord
         methods.each do |method|
           module_eval(<<-EOS, file, line)
             def #{method}(*args, &block)
-              begin
-                #{to}.__send__(:#{method}, *args, &block)
-              rescue ActiveRecord::StatementInvalid => error
-                handle_error(#{to}, error)
-              end
+              target_connection = #{to}
+              target_connection.__send__(:#{method}, *args, &block)
+            rescue ActiveRecord::StatementInvalid => error
+              handle_error(target_connection, error)
             end
           EOS
         end
@@ -531,15 +530,15 @@ module ActiveRecord
         @on_rollback_callbacks ||= []
       end
 
-      def connection_error?(exception)
+      def connection_error?(exception, connection=nil)
         raise NotImplementedError
       end
 
       def handle_error(connection, exception)
-        if master_connection?(connection) && connection_error?(exception)
+        if master_connection?(connection) && connection_error?(exception, connection)
           reset_master_connection
           raise MasterUnavailable
-        elsif slave_connection?(connection) && connection_error?(exception)
+        elsif slave_connection?(connection) && connection_error?(exception, connection)
           connection_stack.map!{|conn| conn == connection ? nil : conn }
           @connections[:slaves].delete(connection)
           @inactive_connections << connection

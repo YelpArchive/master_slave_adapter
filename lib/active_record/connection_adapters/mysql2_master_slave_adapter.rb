@@ -26,7 +26,7 @@ module ActiveRecord
         -1   => "closed MySQL connection",                      # defined by Mysql2
       }
 
-      def connection_error?(exception)
+      def connection_error?(exception, connection=nil)
         case exception
         when ActiveRecord::StatementInvalid
           CONNECTION_ERRORS.values.any? do |description|

@@ -24,10 +24,11 @@ module ActiveRecord
         Mysql::Error::CR_SERVER_LOST,       # Lost connection to MySQL server during query
       ]
 
-      def connection_error?(exception)
+      def connection_error?(exception, connection=nil)
         case exception
         when ActiveRecord::StatementInvalid
-          CONNECTION_ERRORS.include?(current_connection.raw_connection.errno)
+          CONNECTION_ERRORS.include?(
+            (connection || current_connection).raw_connection.errno)
         when Mysql::Error
           CONNECTION_ERRORS.include?(exception.errno)
         else
