@@ -4,16 +4,17 @@ module ActiveRecord
   module ConnectionAdapters
     module MasterSlaveAdapter
       class InactiveQueue
-        attr_accessor :pool, :inactive, :connection, :logger, :consumer
+        attr_accessor :pool, :inactive, :connection, :logger, :consumer, :freq
 
-        def initialize(pool, logger=nil)
+        def initialize(pool, logger=nil, freq=5)
           self.pool     = pool
           self.logger   = logger
           self.inactive = Queue.new
+          self.freq     = freq
         end
 
         def start
-          self.consumer = Thread.new { queue_consumer }
+          self.consumer = Thread.new { loop { consume } }
         end
 
         def stop
@@ -33,22 +34,20 @@ module ActiveRecord
         #
         # on failure push connection back onto inactive queue, on success add
         # connection back to pool
-        def queue_consumer
-          loop do
-            self.connection = inactive.pop
+        def consume
+          self.connection = inactive.pop
 
-            attempt = begin
-              connection.reconnect!
-              connection.active?
-            rescue Exception => e
-              logger.error e if logger
-              false
-            end
-
-            (attempt ? pool : inactive) << connection
-
-            sleep 5
+          attempt = begin
+            connection.reconnect!
+            connection.active?
+          rescue Exception => e
+            logger.error e if logger
+            false
           end
+
+          (attempt ? pool : inactive) << connection
+
+          sleep freq
         end
       end
     end
