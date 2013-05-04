@@ -234,6 +234,8 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
   end
 
   context "given slave is not available" do
+    let(:queue) { connection.instance_variable_get('@inactive_queue').inactive }
+
     before do
       stop_slave 1
       stop_slave 2
@@ -247,8 +249,32 @@ shared_examples_for "a MySQL MasterSlaveAdapter" do
     context "when asked for slave" do
       it "fails" do
         expect do
-          ActiveRecord::Base.with_slave { should_read_from :slave }
+          should_read_from :slave
         end.to raise_error(ActiveRecord::SlaveUnavailable)
+      end
+
+      it "moves slave into inactive queue" do
+        should_read_from :slave rescue nil
+        queue.size.should be(1)
+      end
+
+      it "attempts to reconnect" do
+        all_connections = connection.connections
+        should_read_from :slave rescue nil
+        failed_connections = all_connections - connection.connections
+        failed_connections.size.should be(1)
+        failed_connections.first.should_receive(:reconnect!)
+        sleep(5)
+      end
+
+      it "brings slave back when server available" do
+        all_connections = connection.connections
+        should_read_from :slave rescue nil
+        failed_connection = (all_connections - connection.connections).first
+        slave_port = failed_connection.instance_variable_get('@config')[:port]
+        start_slave(slave_port - master_port)
+        sleep(5)
+        connection.connections.should include(failed_connection)
       end
     end
   end
