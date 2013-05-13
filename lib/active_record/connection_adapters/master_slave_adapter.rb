@@ -108,7 +108,9 @@ module ActiveRecord
         @config = config
         @connections = {}
         @connections[:master] = connect_to_master
-        @connections[:slaves] = @config.fetch(:slaves).map { |cfg| connect(cfg, :slave) }
+        @connections[:slaves] = @config.fetch(:slaves).map do |cfg|
+          connect(cfg, :slave) rescue nil
+        end.compact
 
         @inactive_queue = InactiveQueue.new(@connections[:slaves], logger)
         @inactive_queue.start
