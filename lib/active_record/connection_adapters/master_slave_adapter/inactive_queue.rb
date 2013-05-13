@@ -36,6 +36,7 @@ module ActiveRecord
         # connection back to pool
         def consume
           self.connection = inactive.pop
+          logger.error("reconnecting to #{connection.send :connection_info}")
 
           attempt = begin
             connection.reconnect!
