@@ -1,3 +1,5 @@
+**NOTE: THIS REPO HAS BEEN DEPRECATED**
+
 # Replication Aware Master Slave Adapter [![Build Status](https://secure.travis-ci.org/soundcloud/master_slave_adapter.png)][6]
 
 Improved version of the [master_slave_adapter plugin][1], packaged as a gem.
